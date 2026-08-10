@@ -992,18 +992,23 @@ app.post('/addPubRequest', async (req, res) => {
       if (!Array.isArray(thisGeo)) thisGeo = [thisGeo];
  
       let thisPayout = payoutArr[i] || payoutArr[0];
- 
-      // Now create entries for each OS of this row
-      for (let j = 0; j < rowOsList.length; j++) {
-        const finalOS = rowOsList[j];
- 
-        // Find matching campaign IDs from campaign_data
-        // finalOS is always a single value here ("Android"/"iOS") since "both" is already expanded above
+
+      // ============================================================
+      // FIND CAMPAIGN IDs FOR EACH OS BEFORE INSERTING
+      // ============================================================
+
+      let campaignIdsByOS = {};
+
+      for (const currentOS of rowOsList) {
         let campaignIds = [];
         if (advUserId) {
           const [campaigns] = await db.query(
-            `SELECT id FROM campaign_data WHERE campaign_name = ? AND os = ? AND user_id = ?`,
-            [campaign_name, finalOS, advUserId]
+            `SELECT id
+             FROM campaign_data
+             WHERE campaign_name = ?
+             AND os = ?
+             AND user_id = ?`,
+            [campaign_name, currentOS, advUserId]
           );
           campaignIds = campaigns.map(c => c.id);
         }
@@ -1016,16 +1021,49 @@ app.post('/addPubRequest', async (req, res) => {
           );
           if (advRow?.assign_id) {
             const [fallbackCampaigns] = await db.query(
-              `SELECT id FROM campaign_data WHERE campaign_name = ? AND os = ? AND user_id = ?`,
-              [campaign_name, finalOS, advRow.assign_id]
+              `SELECT id
+               FROM campaign_data
+               WHERE campaign_name = ?
+               AND os = ?
+               AND user_id = ?`,
+              [campaign_name, currentOS, advRow.assign_id]
             );
             campaignIds = fallbackCampaigns.map(c => c.id);
           }
         }
  
+        campaignIdsByOS[currentOS] = campaignIds;
+      }
+      
+      if (thisOS === "both") {
+        const androidIds = campaignIdsByOS["Android"] || [];
+        const iosIds = campaignIdsByOS["iOS"] || [];
+
+        if (androidIds.length === 0 && iosIds.length > 0) {
+          campaignIdsByOS["Android"] = [...iosIds];
+        }
+
+        else if (iosIds.length === 0 && androidIds.length > 0) {
+          campaignIdsByOS["iOS"] = [...androidIds];
+        }
+      }
+
+      for (const finalOS of rowOsList) {
+        const campaignIds = campaignIdsByOS[finalOS] || [];
         const [result] = await db.query(
           `INSERT INTO pub_req
-          (adv_name, campaign_name, payout, os, pub_name, pub_id, pid, geo, note, campaign_ids)
+          (
+            adv_name,
+            campaign_name,
+            payout,
+            os,
+            pub_name,
+            pub_id,
+            pid,
+            geo,
+            note,
+            campaign_ids
+          )
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             adv_name,
