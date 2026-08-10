@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+
+# Editor backups / stray save files
+*.save
+*.save.*
+*.jsy
+
+# Build output (CRA)
+/build
+/dist
+
+# Generated report files (excel exports) and user uploads
+output/
+uploads/
+
+# Test / coverage
+coverage/
+
+# Editor/IDE
+.vscode/
+.idea/
