@@ -411,7 +411,32 @@ exports.loginSubAdmin = async (req, res) => {
     // =========================================================
     // 🔥 GET FULL HIERARCHY (RECURSIVE)
     // =========================================================
-    const getAllSubAdmins = async (startIds) => {};
+    const getAllSubAdmins = async (startIds) => {
+      let allIds = [...startIds];
+      let queue = [...startIds];
+
+      while (queue.length > 0) {
+        const placeholders = queue.map(() => "?").join(",");
+
+        const [rows] = await db.query(
+          `SELECT sub_admin_id
+       FROM manager_subadmins
+       WHERE manager_id IN (${placeholders})`,
+          queue,
+        );
+
+        const newIds = rows
+          .map((r) => r.sub_admin_id)
+          .filter((id) => !allIds.includes(id));
+
+        if (newIds.length === 0) break;
+
+        allIds.push(...newIds);
+        queue = newIds;
+      }
+
+      return allIds;
+    };
 
     // =========================================================
     // 🔥 NORMALIZE ROLE (IMPORTANT)
