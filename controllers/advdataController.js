@@ -158,12 +158,10 @@ exports.updateNote = async (req, res) => {
     );
 
     if (result.affectedRows === 0) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          message: "Record not found or nothing changed.",
-        });
+      return res.status(404).json({
+        success: false,
+        message: "Record not found or nothing changed.",
+      });
     }
 
     // Optional: return updated row
@@ -298,13 +296,24 @@ exports.getAdvDataById = async (req, res) => {
       ) pub
         ON pub.pub_id = ad.pub_id
 
-      WHERE
-        ad.shared_date BETWEEN ? AND ?
-        AND ad.user_id = ?
+ WHERE
+  ad.shared_date BETWEEN ? AND ?
+  AND (
+    ad.user_id = ?
+    OR EXISTS (
+      SELECT 1
+      FROM advids av
+      WHERE av.adv_id = ad.adv_id
+        AND (
+          av.user_id = ?
+          OR av.assign_id = ?
+        )
+    )
+  )
 
       ORDER BY ad.shared_date ASC
-      `,
-      [startDate, endDate, userId],
+  `,
+      [startDate, endDate, userId, userId, userId],
     );
 
     if (!rows.length) {
