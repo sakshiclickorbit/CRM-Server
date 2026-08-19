@@ -1438,7 +1438,7 @@ exports.publisherLogin = async (req, res) => {
 
     // ✅ Fetch user
     const [rows] = await db.query(
-      "SELECT id, mail,username, password, role,pubid FROM pub_accounts WHERE mail = ? LIMIT 1",
+      "SELECT id, mail,username, password, role,pubid, created_by FROM pub_accounts WHERE mail = ? LIMIT 1",
       [mail],
     );
 
@@ -1476,6 +1476,7 @@ exports.publisherLogin = async (req, res) => {
         id: user.id,
         username: user.username,
         role: user.role,
+        created_by: user.created_by,
         permissions: {
           can_see_button1: 0,
           can_see_input1: 0,
