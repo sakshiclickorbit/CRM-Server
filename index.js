@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -32,6 +33,10 @@ app.use(express.json()); // ✅ must be before routes
 app.use(cors({ origin: ["http://localhost:5173","http://160.153.172.237:5371","https://crm.clickorbits.in","http://localhost:3000","https://pidmetric.com"],
   methods: "GET,POST,PUT,DELETE", 
 credentials: true }));
+
+// ✅ Global JWT Authentication Middleware
+const verifyToken = require("./middlewares/verifyToken");
+app.use(verifyToken);
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -1905,7 +1910,7 @@ io.on("connection", (socket) => {
 
 
 
-const PORT = 5200;
+const PORT = process.env.PORT || 5200;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

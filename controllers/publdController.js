@@ -299,6 +299,7 @@ exports.updatePublisher = async (req, res) => {
     } = req.body;
  
     if (!pub_id || !user_id) {
+      connection.release();
       return res
         .status(400)
         .json({ success: false, message: "pub_id and user_id are required" });
