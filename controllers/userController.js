@@ -9,6 +9,7 @@ const path = require("path");
 const cron = require("node-cron");
 const axios = require("axios");
 const { transactionUtils } = require("../routes/transactionUtils"); // Import function
+const { sendOTPEmail } = require("../utils/mail.service");
 
 const { getAccessibleUserIds } = require("../utils/accessControl");
 
@@ -69,7 +70,7 @@ exports.getAssignedUsers = async (req, res) => {
 
     // Fetch id, username, role for all assigned users at all levels
     const [users] = await db.query(
-      `SELECT id, username, role FROM login WHERE id IN (?)`,
+      `SELECT id, username, email, role FROM login WHERE id IN (?)`,
       [subAdminIds],
     );
 
@@ -95,6 +96,7 @@ exports.getAssignedUsers = async (req, res) => {
       id: user.id,
       username: user.username,
       role: user.role,
+      email: user.email,
       permissions: permissionsMap[user.id] || {},
     }));
 
@@ -111,22 +113,33 @@ exports.getAssignedUsers = async (req, res) => {
 exports.createSubAdmin = async (req, res) => {
   const connection = await db.getConnection();
   try {
-    const { username, password, role, assigned_subadmins } = req.body;
+    const { username, email, password, role, assigned_subadmins } = req.body;
 
     console.log("🟢 Create Sub-Admin Request:", req.body);
 
-    if (!username || !password || !role) {
+    if (!username || !email || !password || !role) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
     await connection.beginTransaction();
+    const [[existingUser]] = await connection.query(
+      `SELECT id FROM login WHERE username = ? OR email = ?`,
+      [username, email],
+    );
 
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "Username or Email already exists",
+      });
+    }
     // Step 3: Create Sub-Admin
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const [subAdminResult] = await connection.query(
-      "INSERT INTO login (username, password, role) VALUES (?, ?, ?)",
-      [username, hashedPassword, role],
+      `INSERT INTO login (username, email, password, role)
+     VALUES (?, ?, ?, ?)`,
+      [username, email, hashedPassword, role],
     );
 
     const subAdminId = subAdminResult.insertId;
@@ -175,6 +188,7 @@ exports.createSubAdmin = async (req, res) => {
       subAdmin: {
         id: subAdminId,
         username,
+        email,
         role,
         // ranges: finalMiniRanges,
         assigned_subadmins:
@@ -350,8 +364,8 @@ exports.loginSubAdmin = async (req, res) => {
                   up.can_see_button1, up.can_see_input1, up.can_add_store
            FROM login l
            LEFT JOIN user_permissions up ON l.id = up.id
-           WHERE l.username = ?`,
-      [username],
+           WHERE l.username = ? OR email = ?`,
+      [username, username],
     );
 
     if (!userResults.length) {
@@ -468,7 +482,7 @@ exports.loginSubAdmin = async (req, res) => {
     const token = jwt.sign(
       { id: subAdmin.sub_admin_id, role: role, type: "sub_admin" },
       process.env.JWT_SECRET || "long_jwt_secret_key",
-      { expiresIn: "7d" }
+      { expiresIn: "7d" },
     );
 
     // Final response with permissions
@@ -756,8 +770,6 @@ exports.getUserData = async (req, res) => {
   const userId = req.params.userId;
   const { start_date, end_date } = req.query;
 
-  console.log("id:", userId, "date range:", start_date, end_date);
-
   try {
     // -------------------------------
     // 1️⃣ Validate user
@@ -768,15 +780,27 @@ exports.getUserData = async (req, res) => {
     );
 
     if (!user) {
-      return res.status(404).json({
-        error: "User not found or paused",
-      });
+      return res.status(404).json({ error: "User not found or paused" });
     }
 
     const { role } = user;
 
     // -------------------------------
-    // 2️⃣ Date Filters
+    // 2️⃣ Get accessible user IDs
+    // -------------------------------
+    const accessibleUserIds = await getAccessibleUserIds(db, userId);
+
+    console.log("🔐 Accessible IDs:", accessibleUserIds);
+
+    if (!accessibleUserIds || accessibleUserIds.length === 0) {
+      return res.status(403).json({ error: "No access" });
+    }
+
+    // Prepare placeholders (?, ?, ?)
+    const placeholders = accessibleUserIds.map(() => "?").join(",");
+
+    // -------------------------------
+    // 3️⃣ Date Filters
     // -------------------------------
     let advDateCondition = "";
     let advDateParams = [];
@@ -795,73 +819,69 @@ exports.getUserData = async (req, res) => {
     }
 
     // -------------------------------
-    // 3️⃣ Advertiser Data
-    // ONLY requested user's data
+    // 4️⃣ Advertiser Data
     // -------------------------------
     const [advData] = await db.query(
       `
-      SELECT DISTINCT
-        ad.*,
-        l.id AS user_id,
-        l.username,
-        l.role,
+SELECT DISTINCT
+    ad.*,
+    l.id AS user_id,
+    l.username,
+    l.role,
+    adv.adv_name,
+    pub.pub_name AS pub_am,
+    CONCAT(adv.adv_name, ' (', ad.adv_id, ')') AS adv_display,
+    CONCAT(pub.pub_name, ' (', ad.pub_id, ')') AS pub_display
+FROM adv_data ad
+LEFT JOIN login l
+    ON l.id = ad.user_id
 
-        adv.adv_name,
-        pub.pub_name AS pub_am,
-
-        CONCAT(adv.adv_name, ' (', ad.adv_id, ')') AS adv_display,
-        CONCAT(pub.pub_name, ' (', ad.pub_id, ')') AS pub_display
-
-      FROM adv_data ad
-
-      LEFT JOIN login l
-        ON l.id = ad.user_id
+      LEFT JOIN advids av
+          ON av.adv_id = ad.adv_id
 
       LEFT JOIN (
-        SELECT adv_id, MAX(adv_name) AS adv_name
-        FROM advids
-        GROUP BY adv_id
+          SELECT adv_id, MAX(adv_name) AS adv_name
+          FROM advids
+          GROUP BY adv_id
       ) adv
-        ON adv.adv_id = ad.adv_id
+          ON adv.adv_id = ad.adv_id
 
       LEFT JOIN (
-        SELECT pub_id, MAX(pub_name) AS pub_name
-        FROM publids
-        GROUP BY pub_id
+          SELECT pub_id, MAX(pub_name) AS pub_name
+          FROM publids
+          GROUP BY pub_id
       ) pub
-        ON pub.pub_id = ad.pub_id
+          ON pub.pub_id = ad.pub_id
 
-      WHERE ad.user_id = ?
+      WHERE (
+          ad.user_id IN (${placeholders})
+          OR av.assign_id IN (${placeholders})
+      )
       ${advDateCondition}
-
-      ORDER BY ad.shared_date ASC
       `,
-      [userId, ...advDateParams],
+      [...accessibleUserIds, ...accessibleUserIds, ...advDateParams],
     );
 
     // -------------------------------
-    // 4️⃣ Publisher Data
-    // ONLY requested user's data
+    // 5️⃣ Publisher Data
     // -------------------------------
     const [pubData] = await db.query(
       `
       SELECT *
       FROM pub_data
-      WHERE user_id = ?
+      WHERE user_id IN (${placeholders})
       ${pubDateCondition}
-
-      ORDER BY shared_date ASC
       `,
-      [userId, ...pubDateParams],
+      [...accessibleUserIds, ...pubDateParams],
     );
 
     // -------------------------------
-    // 5️⃣ Final Response
+    // 6️⃣ Final Response
     // -------------------------------
     return res.json({
       success: true,
       role,
-      user_id: Number(userId),
+      accessible_user_ids: accessibleUserIds,
       data: {
         advertiser_data: advData,
         publisher_data: pubData,
@@ -869,7 +889,6 @@ exports.getUserData = async (req, res) => {
     });
   } catch (err) {
     console.error("❌ Error fetching user data:", err);
-
     return res.status(500).json({
       success: false,
       error: "Database error",
@@ -1046,12 +1065,14 @@ exports.getUserDatsssa = async (req, res) => {
 // Get Sub Admins along with ID Ranges data
 
 exports.getSubAdmins = async (req, res) => {
+  console.log("testing api");
   try {
     // Main query: sub-admins, ranges, permissions
     const query = `
       SELECT 
           l.id AS sub_admin_id,
           l.username,
+          l.email,
           l.role,
                          l.pause,  
           
@@ -1066,7 +1087,7 @@ exports.getSubAdmins = async (req, res) => {
     `;
 
     const [entries] = await db.query(query);
-
+    console.log("entry", entries[0]);
     // Manager-subadmin relation query
     const managerQuery = `
       SELECT 
@@ -1084,6 +1105,7 @@ exports.getSubAdmins = async (req, res) => {
         sub_admin_id,
         username,
         role,
+        email,
         pause,
         range_start,
         range_end,
@@ -1098,6 +1120,7 @@ exports.getSubAdmins = async (req, res) => {
         subAdmin = {
           id: sub_admin_id,
           username,
+          email,
           role,
           pause: pause,
 
@@ -1281,6 +1304,7 @@ exports.updateSubAdmin = async (req, res) => {
     const {
       id,
       username,
+      email,
       password,
       role,
       can_see_button1,
@@ -1298,12 +1322,28 @@ exports.updateSubAdmin = async (req, res) => {
       role === "publisher" ||
       role === "advertiser";
 
-    if (!id || !username || !role) {
+    if (!id || !username || !email || !role) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
     await connection.beginTransaction();
+    const [[existingUser]] = await connection.query(
+      `
+  SELECT id
+  FROM login
+  WHERE (username = ? OR email = ?)
+    AND id != ?
+  `,
+      [username, email, id],
+    );
 
+    if (existingUser) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Username or Email already exists",
+      });
+    }
     if (password) {
       const hash = await bcrypt.hash(password, 10);
       await connection.query("UPDATE login SET password = ? WHERE id = ?", [
@@ -1313,9 +1353,15 @@ exports.updateSubAdmin = async (req, res) => {
     }
 
     await connection.query(
-      "UPDATE login SET username = ?, role = ? WHERE id = ?",
-      //      [username, JSON.stringify(role), id]
-      [username, Array.isArray(role) ? role.join(",") : role, id],
+      `
+  UPDATE login
+  SET
+    username = ?,
+    email = ?,
+    role = ?
+  WHERE id = ?
+  `,
+      [username, email, Array.isArray(role) ? role.join(",") : role, id],
     );
 
     // Step 3a: Update permissions for buttons and inputs
@@ -1368,6 +1414,7 @@ exports.updateSubAdmin = async (req, res) => {
       subAdmin: {
         id,
         username,
+        email,
         role,
         // ranges: finalMiniRanges,
         assigned_subadmins: isManager ? assigned_subadmins : undefined,
@@ -1498,6 +1545,280 @@ exports.publisherLogin = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Internal server error",
+    });
+  }
+};
+
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    const [[user]] = await db.query(
+      "SELECT id,email FROM login WHERE email=?",
+      [email],
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "No account found with this email.",
+      });
+    }
+
+    // Delete previous OTP
+    await db.query("DELETE FROM password_reset_otp WHERE user_id=?", [user.id]);
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    const otpHash = await bcrypt.hash(otp, 10);
+
+    const expires = new Date(Date.now() + 10 * 60 * 1000);
+
+    await db.query(
+      `
+      INSERT INTO password_reset_otp
+      (
+        user_id,
+        otp_hash,
+        expires_at
+      )
+      VALUES
+      (?,?,?)
+      `,
+      [user.id, otpHash, expires],
+    );
+
+    await sendOTPEmail(user.email, otp);
+
+    res.json({
+      success: true,
+      message: "OTP sent successfully.",
+    });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+exports.verifyOTP = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and OTP are required.",
+      });
+    }
+
+    // Find user
+    const [[user]] = await db.query("SELECT id FROM login WHERE email = ?", [
+      email,
+    ]);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "No account found with this email.",
+      });
+    }
+
+    // Get latest OTP
+    const [[otpData]] = await db.query(
+      `
+      SELECT *
+      FROM password_reset_otp
+      WHERE user_id = ?
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [user.id],
+    );
+
+    if (!otpData) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP not found. Please request a new OTP.",
+      });
+    }
+
+    // Expired?
+    if (new Date() > new Date(otpData.expires_at)) {
+      await db.query("DELETE FROM password_reset_otp WHERE id = ?", [
+        otpData.id,
+      ]);
+
+      return res.status(400).json({
+        success: false,
+        message: "OTP has expired.",
+      });
+    }
+
+    // Max attempts
+    if (otpData.attempts >= 5) {
+      await db.query("DELETE FROM password_reset_otp WHERE id = ?", [
+        otpData.id,
+      ]);
+
+      return res.status(400).json({
+        success: false,
+        message: "Maximum OTP attempts exceeded.",
+      });
+    }
+
+    // Verify OTP
+    const matched = await bcrypt.compare(otp, otpData.otp_hash);
+
+    if (!matched) {
+      await db.query(
+        `
+        UPDATE password_reset_otp
+        SET attempts = attempts + 1
+        WHERE id = ?
+        `,
+        [otpData.id],
+      );
+
+      return res.status(400).json({
+        success: false,
+        message: "Invalid OTP.",
+      });
+    }
+
+    // Mark verified
+    await db.query(
+      `
+      UPDATE password_reset_otp
+      SET verified = 1
+      WHERE id = ?
+      `,
+      [otpData.id],
+    );
+
+    res.json({
+      success: true,
+      message: "OTP verified successfully.",
+    });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+    });
+  }
+};
+exports.resetPassword = async (req, res) => {
+  try {
+    const { email, password, confirmPassword } = req.body;
+
+    if (!email || !password || !confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "All fields are required.",
+      });
+    }
+
+    if (password !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Passwords do not match.",
+      });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 8 characters.",
+      });
+    }
+
+    // Find user
+    const [[user]] = await db.query("SELECT id FROM login WHERE email=?", [
+      email,
+    ]);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
+
+    // Check verified OTP
+    const [[otp]] = await db.query(
+      `
+      SELECT *
+      FROM password_reset_otp
+      WHERE
+        user_id = ?
+        AND verified = 1
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [user.id],
+    );
+
+    if (!otp) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP verification required.",
+      });
+    }
+
+    // Expired?
+    if (new Date() > new Date(otp.expires_at)) {
+      await db.query("DELETE FROM password_reset_otp WHERE id=?", [otp.id]);
+
+      return res.status(400).json({
+        success: false,
+        message: "OTP has expired.",
+      });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Update password
+    await db.query(
+      `
+      UPDATE login
+      SET password=?
+      WHERE id=?
+      `,
+      [hashedPassword, user.id],
+    );
+
+    // Delete OTP
+    await db.query(
+      `
+      DELETE FROM password_reset_otp
+      WHERE user_id=?
+      `,
+      [user.id],
+    );
+
+    res.json({
+      success: true,
+      message: "Password reset successfully.",
+    });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
     });
   }
 };
