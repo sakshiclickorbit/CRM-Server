@@ -1,4 +1,5 @@
 const db = require("../db/Connection");
+const chatDb = require("../db/ChatConnection");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const dotenv = require("dotenv");
@@ -181,6 +182,50 @@ exports.createSubAdmin = async (req, res) => {
 
     await connection.commit();
 
+    try {
+      const PUB_ROLES = [
+        "publisher", "publisher_manager", "pub_executive",
+        "optimization", "operations", "operation_manager",
+      ];
+      const ADV_ROLES = ["advertiser", "advertiser_manager", "adv_executive"];
+
+      const normalizedRole = (Array.isArray(role) ? role[0] : role || "")
+        .replace(/"/g, "").trim().toLowerCase();
+
+      let crm_user_id = null;
+      if (PUB_ROLES.includes(normalizedRole))       crm_user_id = `pub_0${subAdminId}`;
+      else if (ADV_ROLES.includes(normalizedRole))  crm_user_id = `adv_0${subAdminId}`;
+      else if (normalizedRole === "admin")           crm_user_id = `admin_0${subAdminId}`;
+
+      const chatEmail = email || `${username}@clickorbits.com`;
+      const now = new Date();
+
+      await chatDb.query(
+        `INSERT INTO users
+         (id, username, full_name, email, password_hash, role, crm_user_id,
+          is_online, last_seen, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           username      = VALUES(username),
+           full_name     = VALUES(full_name),
+           email         = VALUES(email),
+           password_hash = VALUES(password_hash),
+           role          = VALUES(role),
+           crm_user_id   = VALUES(crm_user_id),
+           updated_at    = VALUES(updated_at)`,
+        [
+          subAdminId, username, username, chatEmail,
+          hashedPassword, normalizedRole, crm_user_id,
+          now, now, now,
+        ]
+      );
+      console.log(`✅ [ChatDB] User '${username}' (id: ${subAdminId}) synced to chat users table`);
+    } catch (syncErr) {
+      console.warn(
+        `⚠️  [ChatDB] Could not sync user '${username}' to chat users table:`,
+        syncErr.message
+      );
+    }
     console.log("✅ Sub-Admin Created Successfully");
     res.status(201).json({
       success: true,
@@ -722,6 +767,18 @@ exports.changePassword = async (req, res) => {
       userId,
     ]);
 
+    try {
+      await chatDb.query(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        [hashedPassword, userId]
+      );
+      console.log(`✅ [ChatDB] password_hash synced for user ${userId}`);
+    } catch (syncErr) {
+      console.warn(
+        `⚠️  [ChatDB] Could not sync password_hash for user ${userId}:`,
+        syncErr.message
+      );
+    }
     res.json({ message: "Password changed successfully" });
   } catch (error) {
     console.error("Error changing password:", error);
@@ -1408,6 +1465,49 @@ exports.updateSubAdmin = async (req, res) => {
     await connection.commit();
     console.log("✅ Sub‑Admin Updated Successfully");
 
+    try {
+      const PUB_ROLES = [
+        "publisher", "publisher_manager", "pub_executive",
+        "optimization", "operations", "operation_manager",
+      ];
+      const ADV_ROLES = ["advertiser", "advertiser_manager", "adv_executive"];
+
+      const normalizedRole = (Array.isArray(role) ? role[0] : role || "")
+        .replace(/"/g, "").trim().toLowerCase();
+
+      let crm_user_id = null;
+      if (PUB_ROLES.includes(normalizedRole))       crm_user_id = `pub_0${id}`;
+      else if (ADV_ROLES.includes(normalizedRole))  crm_user_id = `adv_0${id}`;
+      else if (normalizedRole === "admin")           crm_user_id = `admin_0${id}`;
+
+      const chatEmail = email || `${username}@clickorbits.com`;
+      const now = new Date();
+
+      if (password) {
+        const newHash = await bcrypt.hash(password, 10);
+        await chatDb.query(
+          `UPDATE users
+           SET username = ?, full_name = ?, email = ?, password_hash = ?,
+               role = ?, crm_user_id = ?, updated_at = ?
+           WHERE id = ?`,
+          [username, username, chatEmail, newHash, normalizedRole, crm_user_id, now, id]
+        );
+      } else {
+        await chatDb.query(
+          `UPDATE users
+           SET username = ?, full_name = ?, email = ?,
+               role = ?, crm_user_id = ?, updated_at = ?
+           WHERE id = ?`,
+          [username, username, chatEmail, normalizedRole, crm_user_id, now, id]
+        );
+      }
+      console.log(`✅ [ChatDB] User '${username}' (id: ${id}) updated in chat users table`);
+    } catch (syncErr) {
+      console.warn(
+        `⚠️  [ChatDB] Could not update user '${username}' in chat users table:`,
+        syncErr.message
+      );
+    }
     res.status(200).json({
       success: true,
       message: "Sub‑admin updated successfully",
@@ -1800,6 +1900,19 @@ exports.resetPassword = async (req, res) => {
       [hashedPassword, user.id],
     );
 
+    // ── Sync password to chat app's users table
+    try {
+      await chatDb.query(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        [hashedPassword, user.id]
+      );
+      console.log(`✅ [ChatDB] password_hash synced for user ${user.id}`);
+    } catch (syncErr) {
+      console.warn(
+        `⚠️  [ChatDB] Could not sync password_hash for user ${user.id}:`,
+        syncErr.message
+      );
+    }
     // Delete OTP
     await db.query(
       `
