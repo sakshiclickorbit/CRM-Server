@@ -56,6 +56,10 @@ async function duplicateData() {
     );
 
     console.log(`Found ${advRows.length} adv_data rows to duplicate`);
+
+    const lastDayOfCurrentMonth = dayjs(
+      `${currentYear}-${currentMonth}-01`
+    ).endOf('month').format('YYYY-MM-DD');
     for (const row of advRows) {
       const insertData = {
         ...row,
@@ -73,6 +77,19 @@ async function duplicateData() {
       console.log('Duplicating adv_data row:', row);
       const [result] = await conn.query('INSERT INTO adv_data SET ?', insertData);
       console.log(`✅ Duplicated adv_data ID ${row.id} to new ID ${result.insertId}`);
+
+      if (!row.paused_date || String(row.paused_date).trim() === '') {
+      await conn.query(
+        `UPDATE adv_data
+        SET paused_date = ?
+        WHERE id = ?`,
+        [lastDayOfCurrentMonth, row.id]
+      );
+
+      console.log(
+        `✅ Updated original adv_data ID ${row.id} paused_date to ${lastDayOfCurrentMonth}`
+      );
+    }
     }
 
     console.log(`[${new Date().toISOString()}] ✅ Duplication complete.`);
