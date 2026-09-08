@@ -1,30 +1,25 @@
-const db = require('../db/Connection');
-const jwt = require('jsonwebtoken');
+const db = require("../db/Connection");
+const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const dotenv = require("dotenv");
-require('dotenv').config();
+require("dotenv").config();
 const multer = require("multer");
 const path = require("path");
 const crypto = require("crypto");
 
-
-const cron = require('node-cron');
-const axios = require('axios');
+const cron = require("node-cron");
+const axios = require("axios");
 const { transactionUtils } = require("../routes/transactionUtils"); // Import function
 
 // const { sendNotification } = require("../socket"); // Import the function from socket.js
-
 
 // Secret key for J
 // WT (store this securely, e.g., in environment variables)
 const JWT_SECRET = process.env.VITE_API_JWT_SECRET;
 
-console.log("JWT_SECRET", JWT_SECRET)
+console.log("JWT_SECRET", JWT_SECRET);
 // const JWT_SECRET = 'gurdeep0111';
 dotenv.config();
-
-
-
 
 // Create Advertisement by Sub-Admin
 // 🔑 Generate random password
@@ -32,7 +27,10 @@ function generatePassword(length = 10) {
   return crypto.randomBytes(length).toString("base64").slice(0, length);
 }
 
-async function createPublisherAccount({ pub_id, created_by, email }, connection) {
+async function createPublisherAccount(
+  { pub_id, created_by, email },
+  connection,
+) {
   const username = `pub_${pub_id}`;
 
   // 🔐 Temporary password pattern: username_@123
@@ -45,7 +43,14 @@ async function createPublisherAccount({ pub_id, created_by, email }, connection)
     INSERT INTO pub_accounts (username, password, act_pass, mail, role, pubid, created_by)
     VALUES (?, ?, ?, ?, 'publisher', ?, ?)
     `,
-    [username, hashedPassword, plainPassword, email || null, pub_id, created_by]
+    [
+      username,
+      hashedPassword,
+      plainPassword,
+      email || null,
+      pub_id,
+      created_by,
+    ],
   );
 
   return {
@@ -54,8 +59,6 @@ async function createPublisherAccount({ pub_id, created_by, email }, connection)
   };
 }
 
-
-
 // Create Advertisement by Sub-Admin
 exports.createPublisher = async (req, res) => {
   try {
@@ -63,7 +66,8 @@ exports.createPublisher = async (req, res) => {
     await connection.beginTransaction();
     console.log("🟢 Create Publisher Request Received:", req.body);
 
-    const { pub_name, pub_id, user_id, geo, note, level, vector, email } = req.body;
+    const { pub_name, pub_id, user_id, geo, note, level, vector, email } =
+      req.body;
 
     // ✅ Validation: Ensure all fields are provided
     if (!pub_name || !pub_id || !user_id || !geo) {
@@ -73,31 +77,31 @@ exports.createPublisher = async (req, res) => {
     // ✅ Insert Advertisement into Database
     await connection.query(
       "INSERT INTO publids (pub_name, pub_id, user_id, geo, note, level, vector) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [pub_name, pub_id, user_id, geo, note, level, vector]
+      [pub_name, pub_id, user_id, geo, note, level, vector],
     );
 
     // 2️⃣ Create account (reusable function)
     const credentials = await createPublisherAccount(
       { pub_id, created_by: user_id, email },
-      connection
+      connection,
     );
     await connection.commit();
 
-
     console.log("✅ Publisher Created Successfully");
-    res.status(201).json({ success: true, message: "Publisher created successfully", credentials });
+    res.status(201).json({
+      success: true,
+      message: "Publisher created successfully",
+      credentials,
+    });
   } catch (error) {
     console.error("❌ Server Error:", error);
     res.status(500).json({ message: "Internal server error", error });
   }
 };
 
-
 /**
  * Fetch publishers by user_id with postback + login details
  */
-
-
 
 async function fetchPublishersWithLoginByUserId(user_id) {
   const [rows] = await db.query(
@@ -135,7 +139,7 @@ async function fetchPublishersWithLoginByUserId(user_id) {
  
     WHERE p.user_id = ?
     `,
-    [user_id]
+    [user_id],
   );
 
   return rows;
@@ -157,20 +161,16 @@ exports.getPublisherByUserId = async (req, res) => {
     if (publishers.length > 0) {
       return res.status(200).json({
         success: true,
-        publishers
+        publishers,
       });
     }
 
     return res.status(200).json({ success: false, publishers: [] });
-
   } catch (error) {
     console.error("❌ getPublisherByUserId error:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
-
-
-
 
 exports.updatePublishermaildata = async (req, res) => {
   const connection = await db.getConnection();
@@ -189,20 +189,20 @@ exports.updatePublishermaildata = async (req, res) => {
       level,
       vector,
       username, // not used now
-      mail
+      mail,
     } = req.body;
 
     if (!pub_id || !user_id) {
       return res.status(400).json({
         success: false,
-        message: "pub_id and user_id are required"
+        message: "pub_id and user_id are required",
       });
     }
 
     // ✅ Get existing publisher
     const [rows] = await connection.query(
       "SELECT * FROM publids WHERE pub_id = ?",
-      [pub_id]
+      [pub_id],
     );
 
     if (!rows.length) {
@@ -210,7 +210,7 @@ exports.updatePublishermaildata = async (req, res) => {
       connection.release();
       return res.status(404).json({
         success: false,
-        message: "Publisher not found"
+        message: "Publisher not found",
       });
     }
 
@@ -250,7 +250,7 @@ exports.updatePublishermaildata = async (req, res) => {
     if (mail && mail !== existing.mail) {
       await connection.query(
         `UPDATE pub_accounts SET email = ? WHERE pub_id = ?`,
-        [mail, pub_id]
+        [mail, pub_id],
       );
     }
 
@@ -260,9 +260,8 @@ exports.updatePublishermaildata = async (req, res) => {
     console.log("✅ Publisher updated successfully");
     res.status(200).json({
       success: true,
-      message: "Publisher updated successfully"
+      message: "Publisher updated successfully",
     });
-
   } catch (error) {
     await connection.rollback();
     connection.release();
@@ -270,7 +269,7 @@ exports.updatePublishermaildata = async (req, res) => {
 
     res.status(500).json({
       success: false,
-      message: "Internal server error"
+      message: "Internal server error",
     });
   }
 };
@@ -336,7 +335,7 @@ exports.updatePublisher = async (req, res) => {
         FROM login
         WHERE id = ?
         LIMIT 1`,
-        [user_id]
+        [user_id],
       );
 
       if (!loginRows.length) {
@@ -348,11 +347,9 @@ exports.updatePublisher = async (req, res) => {
       // Update all historical adv_data belonging to this publisher
       const [advUpdateResult] = await connection.query(
         `UPDATE adv_data
-        SET
-          pub_name = ?,
-          user_id = ?
-        WHERE pub_id = ?`,
-        [newPublisherUsername, user_id, pub_id]
+   SET pub_name = ?
+   WHERE pub_id = ?`,
+        [newPublisherUsername, String(pub_id)],
       );
 
       console.log(
@@ -360,7 +357,7 @@ exports.updatePublisher = async (req, res) => {
         pub_id=${pub_id},
         new user_id=${user_id},
         new pub_name=${newPublisherUsername},
-        rows=${advUpdateResult.affectedRows}`
+        rows=${advUpdateResult.affectedRows}`,
       );
     }
     console.log("✅ adv_data Updated Successfully", username, pub_id);
@@ -400,15 +397,14 @@ exports.updatePublisher = async (req, res) => {
   }
 };
 
-
 const updatePublisherEmail = async (connection, pub_id, mail) => {
   try {
     if (!mail) return; // skip if no email provided
 
-    await connection.query(
-      `UPDATE pub_accounts SET mail = ? WHERE pubid = ?`,
-      [mail, pub_id]
-    );
+    await connection.query(`UPDATE pub_accounts SET mail = ? WHERE pubid = ?`, [
+      mail,
+      pub_id,
+    ]);
 
     console.log("✅ pub_accounts email updated:", mail, pub_id);
   } catch (err) {
@@ -416,9 +412,6 @@ const updatePublisherEmail = async (connection, pub_id, mail) => {
     throw err; // important for transaction rollback
   }
 };
-
-
-
 
 // Update Pause Status for a Publisher
 exports.updatePublisherPause = async (req, res) => {
@@ -428,7 +421,7 @@ exports.updatePublisherPause = async (req, res) => {
     const { pub_id, pause } = req.body;
 
     // ✅ Validate request body
-    if (!pub_id || typeof pause === 'undefined') {
+    if (!pub_id || typeof pause === "undefined") {
       return res.status(400).json({
         success: false,
         message: "Missing required fields: 'pub_id' and 'pause' are mandatory.",
@@ -444,7 +437,10 @@ exports.updatePublisherPause = async (req, res) => {
     }
 
     // ✅ Update the pause field in the database
-    const [result] = await db.query("UPDATE publids SET pause = ? WHERE pub_id = ?", [pause, pub_id]);
+    const [result] = await db.query(
+      "UPDATE publids SET pause = ? WHERE pub_id = ?",
+      [pause, pub_id],
+    );
 
     if (result.affectedRows === 0) {
       // ⚠️ pub_id does not exist
@@ -460,7 +456,6 @@ exports.updatePublisherPause = async (req, res) => {
       success: true,
       message: "Pause status updated successfully.",
     });
-
   } catch (error) {
     // ❌ Unexpected error
     console.error("❌ Internal Server Error:", error);
@@ -472,9 +467,6 @@ exports.updatePublisherPause = async (req, res) => {
   }
 };
 
-
-
-
 //new update place_link
 exports.updatePublisherPlaceLink = async (req, res) => {
   try {
@@ -485,7 +477,7 @@ exports.updatePublisherPlaceLink = async (req, res) => {
     if (!pub_id || !user_id || !place_link) {
       return res.status(400).json({
         success: false,
-        message: "pub_id, user_id and place_link are required"
+        message: "pub_id, user_id and place_link are required",
       });
     }
 
@@ -496,28 +488,26 @@ exports.updatePublisherPlaceLink = async (req, res) => {
         SET postback_url = ?
         WHERE publisher_id = ? AND pub_id = ?
         `,
-      [place_link.trim(), pub_id, user_id]
+      [place_link.trim(), pub_id, user_id],
     );
 
     if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
-        message: "No matching publisher record found"
+        message: "No matching publisher record found",
       });
     }
 
     return res.status(200).json({
       success: true,
       message: "place_link updated successfully",
-      affected_rows: result.affectedRows
+      affected_rows: result.affectedRows,
     });
-
   } catch (error) {
     console.error("❌ Update place_link error:", error);
     return res.status(500).json({
       success: false,
-      message: "Internal server error"
+      message: "Internal server error",
     });
   }
 };
-
