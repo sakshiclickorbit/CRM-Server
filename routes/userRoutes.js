@@ -98,7 +98,9 @@ router.post('/change-pass/:userId', userController.changePassword);
 router.put('/update-sub-admin', userController.updateSubAdmin);
 router.delete('/delete-sub-admin', userController.deleteSubAdmin);
 router.put('/subadmin-status/:id', userController.updateSubAdminStatus);
-
+router.post("/forgot-password", userController.forgotPassword);
+router.post("/verify-otp", userController.verifyOTP);
+router.post("/reset-password", userController.resetPassword);
 router.get('/assigned-users', userController.getAssignedUsers);
 
 
