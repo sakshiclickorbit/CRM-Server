@@ -464,10 +464,18 @@ exports.loginSubAdmin = async (req, res) => {
       assignedSubAdmins = allIds.filter((id) => id !== subAdmin.sub_admin_id);
     }
 
+    // Generate JWT
+    const token = jwt.sign(
+      { id: subAdmin.sub_admin_id, role: role, type: "sub_admin" },
+      process.env.JWT_SECRET || "long_jwt_secret_key",
+      { expiresIn: "7d" }
+    );
+
     // Final response with permissions
     return res.status(200).json({
       success: true,
       message: "Login successful",
+      token,
       subAdmin: {
         id: subAdmin.sub_admin_id,
         username: subAdmin.username,
@@ -1464,7 +1472,7 @@ exports.publisherLogin = async (req, res) => {
     // ✅ Generate JWT
     const token = jwt.sign(
       { id: user.id, role: user.role, type: "publisher_external" },
-      process.env.JWT_SECRET || "supersecretkey",
+      process.env.JWT_SECRET || "long_jwt_secret_key",
       { expiresIn: "7d" },
     );
 

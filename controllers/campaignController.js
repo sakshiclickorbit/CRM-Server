@@ -237,7 +237,7 @@ exports.CampaignDatanew = async (req, res) => {
    console.error("❌ Error inserting campaign:", err.message);
    return res.status(500).json({ error: err.message });
   } finally {
-   connection. Release();
+   connection.release();
   }
 };
 
