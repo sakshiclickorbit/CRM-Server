@@ -706,6 +706,23 @@ exports.updateSubAdminStatus = async (req, res) => {
     // -------------------------------
     await db.query("UPDATE login SET pause = ? WHERE id = ?", [pause, id]);
 
+    // -------------------------------
+    // SYNC STATUS TO CHATDB
+    // -------------------------------
+    try {
+      const isActive = Number(pause) === 1 ? 0 : 1;
+      await chatDb.query("UPDATE users SET is_active = ? WHERE id = ?", [
+        isActive,
+        id,
+      ]);
+      console.log(`✅ [ChatDB] is_active synced for user ${id}`);
+    } catch (syncErr) {
+      console.warn(
+        `⚠️  [ChatDB] Could not sync is_active for user ${id}:`,
+        syncErr.message,
+      );
+    }
+
     return res.json({
       success: true,
       message:
@@ -1567,6 +1584,20 @@ exports.deleteSubAdmin = async (req, res) => {
     await connection.commit();
 
     console.log("✅ Sub-Admin Deleted Successfully");
+
+    // -------------------------------
+    // SYNC DELETE TO CHATDB
+    // -------------------------------
+    try {
+      await chatDb.query("DELETE FROM users WHERE id = ?", [id]);
+      console.log(`✅ [ChatDB] User (id: ${id}) removed from chat users table`);
+    } catch (syncErr) {
+      console.warn(
+        `⚠️  [ChatDB] Could not remove user (id: ${id}) from chat users table:`,
+        syncErr.message,
+      );
+    }
+
     res
       .status(200)
       .json({ success: true, message: "Sub-admin deleted successfully" });
