@@ -351,7 +351,20 @@ exports.updatePublisher = async (req, res) => {
    WHERE pub_id = ?`,
         [newPublisherUsername, String(pub_id)],
       );
+      // transfer historical analytics to new user_id
+      const [campaignMetricsUpdateResult] = await connection.query(
+        `UPDATE campaign_metrics_new
+   SET pubam = ?
+   WHERE pubid = ?`,
+        [newPublisherUsername, String(pub_id)],
+      );
 
+      console.log(
+        `✅ campaign_metrics_new updated:
+   pubid=${pub_id},
+   new pubam=${newPublisherUsername},
+   rows=${campaignMetricsUpdateResult.affectedRows}`,
+      );
       console.log(
         `✅ Historical adv_data transferred:
         pub_id=${pub_id},
